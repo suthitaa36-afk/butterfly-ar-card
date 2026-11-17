@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="theme-color" content="#164b1e" />
+  <title>Butterfly AR Card</title>
+  <style>
+    *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#102a13;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#fff}
+    #app{position:fixed;inset:0} #hud{position:fixed;z-index:5;left:0;right:0;top:0;padding:calc(12px + env(safe-area-inset-top)) 14px 14px;background:linear-gradient(#071b0ddd,transparent);pointer-events:none}
+    h1{font-size:19px;margin:0 0 5px;font-weight:800;text-shadow:0 1px 5px #000} #status{font-size:13px;line-height:1.4;color:#efffe9;text-shadow:0 1px 4px #000}
+    #controls{position:fixed;z-index:6;bottom:calc(18px + env(safe-area-inset-bottom));left:0;right:0;display:flex;justify-content:center;gap:10px;padding:0 14px}
+    button{border:0;border-radius:999px;padding:13px 20px;font-size:15px;font-weight:750;background:#f3c94e;color:#173b17;box-shadow:0 4px 18px #0006}button.secondary{background:#fff;color:#173b17}button:disabled{opacity:.5}
+    #hint{position:fixed;z-index:4;left:14px;right:14px;bottom:90px;text-align:center;font-size:12px;color:#fff;text-shadow:0 1px 4px #000;pointer-events:none}
+    #fallback{position:fixed;z-index:10;inset:0;display:none;align-items:center;justify-content:center;padding:24px;background:#102a13;text-align:center}#fallback .panel{max-width:420px}#fallback h2{font-size:22px}
+  </style>
+  <script type="importmap">
+  {"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/","mindar-image-three":"https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"}}
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud"><h1>🦋 Butterfly AR</h1><div id="status">กด “เริ่มสแกน” แล้วส่องกล้องไปที่การ์ดผีเสื้อ</div></div>
+  <div id="hint">วางการ์ดบนพื้นราบ ในที่มีแสงสว่าง และถือกล้องให้นิ่ง</div>
+  <div id="controls"><button id="start">เริ่มสแกน</button><button id="stop" class="secondary" disabled>หยุดกล้อง</button></div>
+  <div id="fallback"><div class="panel"><h2>ยังไม่พบไฟล์ targets.mind</h2><p>ทำตามคู่มือในไฟล์ README_TH.txt แล้วนำ targets.mind มาไว้โฟลเดอร์เดียวกับ index.html</p></div></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { MindARThree } from 'mindar-image-three';
+
+    const status = document.querySelector('#status');
+    const startBtn = document.querySelector('#start');
+    const stopBtn = document.querySelector('#stop');
+    const fallback = document.querySelector('#fallback');
+    let mindar = null, mixer = null, butterfly = null, raf = null;
+    const clock = new THREE.Clock();
+
+    async function startAR(){
+      startBtn.disabled = true;
+      status.textContent = 'กำลังเปิดกล้อง…';
+      try {
+        const response = await fetch('./targets.mind', {method:'HEAD'});
+        if(!response.ok) throw new Error('missing-target');
+        mindar = new MindARThree({container: document.querySelector('#app'), imageTargetSrc:'./targets.mind', maxTrack:1});
+        const {renderer, scene, camera} = mindar;
+        const anchor = mindar.addAnchor(0);
+        const light = new THREE.HemisphereLight(0xffffff, 0x526b35, 2.2); scene.add(light);
+        const key = new THREE.DirectionalLight(0xffffff, 2.0); key.position.set(1,2,3); scene.add(key);
+        status.textContent = 'กำลังโหลดโมเดลผีเสื้อ 3 มิติ…';
+        const loader = new GLTFLoader();
+        const gltf = await new Promise((resolve,reject)=>loader.load(
+          'https://cdn.3dassets.dev/assets/20654/v1/model.glb', resolve, undefined, reject));
+        butterfly = gltf.scene;
+        butterfly.scale.setScalar(6.0);
+        butterfly.position.set(0, 0.08, 0.12);
+        butterfly.rotation.y = Math.PI;
+        anchor.group.add(butterfly);
+        if(gltf.animations && gltf.animations.length){ mixer = new THREE.AnimationMixer(butterfly); gltf.animations.forEach(c=>mixer.clipAction(c).play()); }
+        anchor.onTargetFound = () => { status.textContent = 'พบการ์ดแล้ว! ผีเสื้อ 3 มิติปรากฏขึ้น 🦋'; };
+        anchor.onTargetLost = () => { status.textContent = 'กำลังค้นหาการ์ด…'; };
+        await mindar.start();
+        renderer.setAnimationLoop(()=>{
+          const dt = clock.getDelta();
+          if(mixer) mixer.update(dt);
+          if(butterfly && !mixer) butterfly.rotation.y += dt * 0.28;
+          renderer.render(scene,camera);
+        });
+        status.textContent = 'ส่องกล้องไปที่การ์ดผีเสื้อ';
+        stopBtn.disabled = false;
+      } catch(err) {
+        console.error(err);
+        if(String(err.message).includes('missing-target')) fallback.style.display='flex';
+        else status.textContent = 'เปิดกล้องหรือโหลดโมเดลไม่สำเร็จ กรุณาอนุญาตใช้กล้องและลองใหม่';
+        startBtn.disabled = false;
+        if(mindar){ try{mindar.stop();}catch(e){} mindar=null; }
+      }
+    }
+    async function stopAR(){
+      if(mindar){ mindar.renderer.setAnimationLoop(null); await mindar.stop(); mindar=null; }
+      document.querySelector('#app').innerHTML='';
+      startBtn.disabled=false; stopBtn.disabled=true;
+      status.textContent='กด “เริ่มสแกน” แล้วส่องกล้องไปที่การ์ดผีเสื้อ';
+    }
+    startBtn.addEventListener('click',startAR);
+    stopBtn.addEventListener('click',stopAR);
+  </script>
+</body>
+</html>
